@@ -115,15 +115,6 @@ def batch_rename(directory: str):
         print(f"Current Name: {temp}\nNew Name: {final}\n")
         os.rename(temp, final)
 
-def cleanup_tmp_dirs(root: str, prefix: str = "_tmp_") -> list[str]:
-    removed: list[str] = []
-    for name in os.listdir(root):
-        path = os.path.join(root, name)
-        if name.startswith(prefix) and os.path.isdir(path):
-            shutil.rmtree(path)
-            removed.append(path)
-    return removed
-
 def image_clip(directory: str, prompt: str, type_of: str, style_: str):
 
     directory = os.path.normpath(directory)
@@ -260,9 +251,3 @@ if __name__ == "__main__":
     batch_rename(directory)
     
     image_clip(directory, prompt_text, type_of, style_)
-    
-    answer = input("Delete folders here starting with '_tmp_'? (y/N): ").strip().lower()
-    
-    if answer in {"y", "yes"}:
-        removed = cleanup_tmp_dirs(os.getcwd())
-        print(f"Removed {len(removed)} folder(s).")
