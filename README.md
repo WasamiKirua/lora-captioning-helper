@@ -14,9 +14,11 @@ Small utility to (optionally) rename a folder of images and generate `.txt` capt
 
 - Put your training images inside a folder whose name is your LoRA trigger token (example: `Suz1e/`).
 - When you run the script and enter `directory=Suz1e`, the folder name (`Suz1e`) is used as:
-  - the trigger name referenced in the generated captions
-  - the prefix for renaming if you use `batch_rename()`
+  - the prefix for renaming (`Suz1e0.jpg`, `Suz1e1.jpg`, ...)
+  - the character/trigger token injected into prompts when you’re not doing style-only training
+- Before renaming, the script converts `.avif`, `.png`, `.webp`, and `.jpeg` images to `.jpg` (and deletes the originals) so your dataset ends up with consistent `.jpg` files.
 - For each image, the script writes a matching caption file next to it: `image.jpg` → `image.txt`.
+- If you select training `type_of="style"`, the script does not treat the directory name as the trigger token; instead it appends your style string to every caption (example: `..., hiroiko araki style`).
 
 ## Run
 
@@ -29,4 +31,3 @@ Then follow the prompts for:
 ## Note
 
 Prompts are tailored to generate SFW and NSFW captions (if intended)
-

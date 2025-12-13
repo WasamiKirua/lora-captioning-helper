@@ -30,14 +30,67 @@ def _natural_key(text: str):
         if part != ""
     )
 
+def convert_images_to_jpg(directory: str) -> list[tuple[str, str]]:
+    """
+    Convert .avif/.png/.webp/.jpeg images to .jpg in-place (same folder), then delete originals.
+    Returns a list of (source, converted) paths.
+    """
+    directory = os.path.normpath(directory)
+    convert_exts = {".avif", ".png", ".webp", ".jpeg"}
+
+    converted: list[tuple[str, str]] = []
+    failures: list[tuple[str, str]] = []
+
+    for filename in os.listdir(directory):
+        source = os.path.join(directory, filename)
+        if not os.path.isfile(source):
+            continue
+
+        stem, ext = os.path.splitext(filename)
+        ext = ext.casefold()
+        if ext not in convert_exts:
+            continue
+
+        # Default output: same stem, .jpg. Avoid overwriting an existing file.
+        dest = os.path.join(directory, f"{stem}.jpg")
+        if os.path.exists(dest):
+            dest = os.path.join(directory, f"{stem}__from_{ext.lstrip('.')}.jpg")
+            if os.path.exists(dest):
+                dest = os.path.join(directory, f"{stem}__from_{ext.lstrip('.')}_{uuid.uuid4().hex}.jpg")
+
+        try:
+            with Image.open(source) as img:
+                rgb = img.convert("RGB")
+                exif = img.info.get("exif")
+                save_kwargs = {"format": "JPEG", "quality": 95, "optimize": True}
+                if exif:
+                    save_kwargs["exif"] = exif
+                rgb.save(dest, **save_kwargs)
+            os.remove(source)
+            converted.append((source, dest))
+        except Exception as e:
+            failures.append((source, str(e)))
+
+    if failures:
+        msg_lines = ["Failed to convert some images to .jpg:"]
+        msg_lines.extend([f"- {path}: {err}" for path, err in failures])
+        msg_lines.append(
+            "If AVIF files fail to open, install an AVIF-capable Pillow build or add `pillow-avif-plugin`."
+        )
+        raise RuntimeError("\n".join(msg_lines))
+
+    return converted
+
 def batch_rename(directory: str):
     directory = os.path.normpath(directory)
     prefix = os.path.basename(directory)
 
+    allowed_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".avif"}
     files = [
         filename
         for filename in os.listdir(directory)
         if os.path.isfile(os.path.join(directory, filename))
+        and os.path.splitext(filename)[1].casefold() in allowed_exts
     ]
 
     files.sort(
@@ -71,7 +124,7 @@ def cleanup_tmp_dirs(root: str, prefix: str = "_tmp_") -> list[str]:
             removed.append(path)
     return removed
 
-def image_clip(directory: str, prompt: str):
+def image_clip(directory: str, prompt: str, type_of: str, style_: str):
 
     directory = os.path.normpath(directory)
     character_name = os.path.basename(directory)
@@ -137,9 +190,16 @@ def image_clip(directory: str, prompt: str):
                 if "choices" in response_data
                 else "No caption found"
             )
+            caption_out = caption.strip()
+            if type_of == "style" and style_:
+                caption_out = caption_out.rstrip()
+                if caption_out.endswith("."):
+                    caption_out = caption_out[:-1].rstrip()
+                caption_out = f"{caption_out}, {style_}"
             with open(caption_path, "w", encoding="utf-8") as caption_text:
-                caption_text.write(caption.strip())
+                caption_text.write(caption_out)
             print(f"💾 Saved caption: {caption_path}")
+            print()
         else:
             if response.status_code == 401 and not api_key:
                 print(
@@ -167,22 +227,39 @@ if __name__ == "__main__":
             break
         print('❌ Invalid prompt. Choose: "descriptive", "descriptive_casual", "sd_prompt"')
 
-    if prompt == 'descriptive':
-        descriptive = descriptive.replace("LENGTH", length)
-        descriptive = descriptive.replace("DIRECTORY", directory)
-        print(descriptive)
-    elif prompt == 'descriptive_casual':
-        descriptive_casual = descriptive_casual.replace("LENGTH", length)
-        descriptive_casual = descriptive_casual.replace("DIRECTORY", directory)
-        print(descriptive_casual)
-    elif prompt == 'sd_prompt':
-        sd_prompt = sd_prompt.replace("LENGTH", length)
-        sd_prompt = sd_prompt.replace("DIRECTORY", directory)
-        print(sd_prompt)
+    while True:
+        type_of = input(r'Enter the training type: "carachter", "style": ').strip().lower()
+        if type_of in ["style", "carachter"]:
+            break
+        print('❌ Invalid type. Choose: "style", "carachter"')
     
+    if type_of == 'style':
+        style_ = input(r'Enter the syle description, Ex: "hiroiko araki style": ').strip().lower()
+    else:
+        style_ = ""
+
+    if prompt == 'descriptive' and type_of == 'carachter':
+        prompt_text = descriptive.replace("LENGTH", length).replace("DIRECTORY", directory)
+    elif prompt == 'descriptive_casual' and type_of == 'carachter':
+        prompt_text = descriptive_casual.replace("LENGTH", length).replace("DIRECTORY", directory)
+    elif prompt == 'sd_prompt' and type_of == 'carachter':
+        prompt_text = sd_prompt.replace("LENGTH", length).replace("DIRECTORY", directory)
+
+    elif prompt == 'descriptive' and type_of == 'style':
+        prompt_text = descriptive_style.replace("LENGTH", length)
+    elif prompt == 'descriptive_casual' and type_of == 'style':
+        prompt_text = descriptive_casual_style.replace("LENGTH", length)
+    elif prompt == 'sd_prompt' and type_of == 'style':
+        prompt_text = sd_prompt_style.replace("LENGTH", length)
+    else:
+        raise RuntimeError(f"Unknown prompt: {prompt}")
+
+    print(prompt_text)
+    
+    convert_images_to_jpg(directory)
     batch_rename(directory)
     
-    image_clip(directory, prompt)
+    image_clip(directory, prompt_text, type_of, style_)
     
     answer = input("Delete folders here starting with '_tmp_'? (y/N): ").strip().lower()
     
