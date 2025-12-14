@@ -139,6 +139,7 @@ def image_clip(directory: str, prompt: str, type_of: str, style_: str):
         caption_path = os.path.splitext(image_path)[0] + ".txt"
 
         print(f"🖼️  Captioning: {image_path}")
+        print()
 
         image = Image.open(image_path).convert("RGB")
 
@@ -244,8 +245,11 @@ if __name__ == "__main__":
         prompt_text = sd_prompt_style.replace("LENGTH", length)
     else:
         raise RuntimeError(f"Unknown prompt: {prompt}")
-
+    print()
+    print("ℹ️ Prompt for this run:")
+    print()
     print(prompt_text)
+    print()
     
     convert_images_to_jpg(directory)
     batch_rename(directory)
