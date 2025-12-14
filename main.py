@@ -118,12 +118,6 @@ def batch_rename(directory: str):
 def image_clip(directory: str, prompt: str, type_of: str, style_: str):
 
     directory = os.path.normpath(directory)
-    character_name = os.path.basename(directory)
-
-    test_prompt = f"""Write a medium-length detailed description for this image. If there is a person/character in the image you must refer to them as {character_name}. 
-    Do NOT mention the image's resolution. Do NOT mention any text that is in the image. 
-    Mention whether the image depicts an extreme close-up, close-up, medium close-up, medium shot, cowboy shot, medium wide shot, wide shot, or extreme wide shot. 
-    Do not mention the mood/feeling/etc of the image. Your response will be used by a text-to-image model, so avoid useless meta phrases like “This image shows…”, "You are looking at...", etc."""
 
     allowed_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
     imgs = [
@@ -173,9 +167,9 @@ def image_clip(directory: str, prompt: str, type_of: str, style_: str):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        response = requests.post(vllm_url, json=data, headers=headers, timeout=300)
-
-        if response.status_code == 200:
+        try:
+            response = requests.post(vllm_url, json=data, headers=headers, timeout=300)
+            response.raise_for_status()
             response_data = response.json()
             caption = (
                 response_data["choices"][0]["message"]["content"]
@@ -192,66 +186,54 @@ def image_clip(directory: str, prompt: str, type_of: str, style_: str):
                 caption_text.write(caption_out)
             print(f"💾 Saved caption: {caption_path}")
             print()
-        else:
-            if response.status_code == 401 and not api_key:
-                print(
-                    "Error: 401 Unauthorized. Set VLLM_API_TOKEN (or VLLM_API_KEY / OPENAI_API_KEY) "
-                    "to match your vLLM server's API token."
-                )
-            else:
-                print(f"Error: {response.status_code}, {response.text}")
+        except requests.exceptions.RequestException as e:
+            print("An error occurred:", e)
 
 if __name__ == "__main__":
+    
     print("Python Program to caption image Lora dataset")
     directory = input(r"Enter the path of the folder: ")
-    
-    while True:
-        length = input(r'Enter caption length: "short", "medium-length", "long", "very long": ').strip().lower()
-        if length in caption_length:
-            break
-        print('❌ Invalid length. Choose: "short", "medium-length", "long", "very long"')
-    
-    allowed_prompts = ["descriptive", "descriptive_casual", "sd_prompt"]
+    directory = os.path.normpath(directory)
+    directory_token = os.path.basename(directory)
+
+    allowed_prompts = ["descriptive", "descriptive_casual", "sd_prompt", "style"]
 
     while True:
-        prompt = input(r'Enter prompt type: "descriptive", "descriptive_casual", "sd_prompt": ').strip().lower()
+        prompt = input(r'Enter prompt type: "descriptive", "descriptive_casual", "sd_prompt", "style": ').strip().lower()
         if prompt in allowed_prompts:
             break
-        print('❌ Invalid prompt. Choose: "descriptive", "descriptive_casual", "sd_prompt"')
-
-    while True:
-        type_of = input(r'Enter the training type: "carachter", "style": ').strip().lower()
-        if type_of in ["style", "carachter"]:
-            break
-        print('❌ Invalid type. Choose: "style", "carachter"')
+        print('❌ Invalid prompt. Choose: "descriptive", "descriptive_casual", "sd_prompt", "style"')
     
-    if type_of == 'style':
+    type_of = ""
+    style_ = ""
+
+    if prompt == "style":
+        type_of = "style"
         style_ = input(r'Enter the syle description, Ex: "hiroiko araki style": ').strip().lower()
+        prompt_text = style_prompt
     else:
-        style_ = ""
-
-    if prompt == 'descriptive' and type_of == 'carachter':
-        prompt_text = descriptive.replace("LENGTH", length).replace("DIRECTORY", directory)
-    elif prompt == 'descriptive_casual' and type_of == 'carachter':
-        prompt_text = descriptive_casual.replace("LENGTH", length).replace("DIRECTORY", directory)
-    elif prompt == 'sd_prompt' and type_of == 'carachter':
-        prompt_text = sd_prompt.replace("LENGTH", length).replace("DIRECTORY", directory)
-
-    elif prompt == 'descriptive' and type_of == 'style':
-        prompt_text = descriptive_style.replace("LENGTH", length)
-    elif prompt == 'descriptive_casual' and type_of == 'style':
-        prompt_text = descriptive_casual_style.replace("LENGTH", length)
-    elif prompt == 'sd_prompt' and type_of == 'style':
-        prompt_text = sd_prompt_style.replace("LENGTH", length)
-    else:
-        raise RuntimeError(f"Unknown prompt: {prompt}")
+        while True:
+            length = input(r'Enter caption length: "short", "medium-length", "long", "very long": ').strip().lower()
+            if length in caption_length:
+                break
+            print('❌ Invalid length. Choose: "short", "medium-length", "long", "very long"')
+    
+        if prompt == 'descriptive':
+            prompt_text = descriptive.replace("LENGTH", length).replace("DIRECTORY", directory_token)
+        elif prompt == 'descriptive_casual':
+            prompt_text = descriptive_casual.replace("LENGTH", length).replace("DIRECTORY", directory_token)
+        elif prompt == 'sd_prompt':
+            prompt_text = sd_prompt.replace("LENGTH", length).replace("DIRECTORY", directory_token)
+        else:
+            raise RuntimeError(f"Unknown prompt: {prompt}")
+    
     print()
     print("ℹ️ Prompt for this run:")
     print()
     print(prompt_text)
     print()
     
-    convert_images_to_jpg(directory)
-    batch_rename(directory)
+    #convert_images_to_jpg(directory)
+    #batch_rename(directory)
     
     image_clip(directory, prompt_text, type_of, style_)
