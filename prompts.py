@@ -30,10 +30,15 @@ Include information about camera angle.
 Specify the depth of field and whether the background is in focus or blurred. If applicable, mention the likely use of artificial or natural lighting sources.
 """
 
-style_prompt = f"""Write a very short straightforward caption for this image. Describe only main subject. Omit mood and speculative wording. 
-Never mention what's absent, resolution, or unobservable details. Keep the description concise, without starting with “This image is…” or similar phrasing. 
-Do NOT mention the image's resolution. Do NOT use any ambiguous language. ONLY describe the most important elements of the image. 
-If it is a work of art, do not include the artist's name or the title of the work. Do NOT mention the mood/feeling/etc of the image. 
-Your response will be used by a text-to-image model, so avoid useless meta phrases like “This image shows…”, "You are looking at...", etc. 
-Do NOT include information about people/characters that cannot be changed (like ethnicity, gender, etc)."""
+style_prompt = f"""Write a very short straightforward caption for this image. Begin with the main subject and medium. 
+Mention pivotal elements—people, objects, scenery—using confident, definite language. 
+Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. 
+Omit mood and speculative wording. If text is present, quote it exactly. 
+Note any watermarks, signatures, or compression artifacts. 
+Never mention what's absent, resolution, or unobservable details. 
+Vary your sentence structure and keep the description concise, without starting with “This image is…” or similar phrasing. 
+Do NOT mention the image's resolution. Do NOT mention any text that is in the image. Do NOT use any ambiguous language. 
+If it is a work of art, do not include the artist's name or the title of the work. 
+Do NOT use polite euphemisms—lean into blunt, casual phrasing. Do not mention the mood/feeling/etc of the image. 
+Your response will be used by a text-to-image model, so avoid useless meta phrases like “This image shows…”, "You are looking at...", etc."""
 
