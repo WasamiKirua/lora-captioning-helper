@@ -1,27 +1,146 @@
+from dotenv import load_dotenv
+from prompts import CAPTION_CHARACTER, CAPTION_STYLE
+from transformers import LlavaForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
+from PIL import Image
+from openai import OpenAI
+import torch
+import uuid
 import os
 import re
-import shutil
-import uuid
-import requests
-from PIL import Image
-import io
 import base64
-import json
-import sys
-from dotenv import load_dotenv
-from prompts import *
+import mimetypes
 
-
-# PORT 8000 VastAI
 load_dotenv()
-vllm_url = os.getenv("VLLM_URL")
-vllm_url = f'http://{vllm_url}/v1/chat/completions'  # or 'v1/responses'
-model_name = os.getenv("MODEL_NAME")
-api_key = (
-    os.getenv("VLLM_API_TOKEN")
-    or os.getenv("VLLM_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
+
+MODEL_ID = "fancyfeast/llama-joycaption-beta-one-hf-llava"
+GPU_TIER = os.getenv("CUDA_GPU", "").strip().lower()
+USE_GEMMA = os.getenv("USE_GEMMA", "").strip().lower()
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPEN_ROUTER_API"),
 )
+
+cuda_available = torch.cuda.is_available()
+
+if cuda_available:
+    device = "cuda"
+    dtype = torch.bfloat16
+else:
+    device = "cpu"
+    dtype = torch.float32
+
+processor = AutoProcessor.from_pretrained(MODEL_ID)
+use_4bit = cuda_available and GPU_TIER == "poor"
+
+if USE_GEMMA == "yes":
+    model = None
+elif not cuda_available:
+    raise RuntimeError("CUDA GPU required to load the model.")
+elif use_4bit:
+    try:
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=dtype,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "GPU=poor requested 4-bit loading, but bitsandbytes is unavailable."
+        ) from exc
+    model = LlavaForConditionalGeneration.from_pretrained(
+        MODEL_ID,
+        quantization_config=quant_config,
+        device_map="auto",
+    )
+elif GPU_TIER == "reach":
+    model = LlavaForConditionalGeneration.from_pretrained(
+        MODEL_ID,
+        torch_dtype=dtype,
+    )
+    model.to(device)
+else:
+    raise RuntimeError(
+        "Set CUDA_GPU to 'reach' for full precision or 'poor' for 4-bit quantization."
+    )
+if model is not None:
+    model.eval()
+
+def image_to_data_url(path):
+    mime, _ = mimetypes.guess_type(path)
+    if mime not in {"image/jpeg", "image/png"}:
+        raise ValueError(f"Unsupported image type: {mime or 'unknown'}")
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+def caption_image(image_path: str, prompt: str) -> str:
+    if model is None:
+        raise RuntimeError("Model is not loaded. Use caption_image_silicon() instead.")
+    image = Image.open(image_path).convert("RGB")
+
+    convo = [
+        {"role": "user", "content": prompt.strip()},
+    ]
+    convo_string = processor.apply_chat_template(
+        convo, tokenize=False, add_generation_prompt=True
+    )
+
+    inputs = processor(
+        text=[convo_string],
+        images=[image],
+        return_tensors="pt",
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(dtype)
+
+    eos_token_id = processor.tokenizer.eos_token_id
+    output_ids = model.generate(
+        **inputs,
+        max_new_tokens=256,
+        do_sample=False,
+        eos_token_id=eos_token_id,
+        pad_token_id=eos_token_id,
+        repetition_penalty=1.1,
+        no_repeat_ngram_size=3,
+    )
+    prompt_len = inputs["input_ids"].shape[1]
+    generated_ids = output_ids[0][prompt_len:]
+    text = processor.tokenizer.decode(
+        generated_ids, skip_special_tokens=True
+    ).strip()
+    return text.split("###", 1)[0].strip()
+
+def caption_image_silicon(input_data):
+    completion_input = client.chat.completions.create(
+        extra_body={},
+        model="google/gemma-3-4b-it:free",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{CAPTION_CHARACTER}"
+                    },
+                    
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                        "url": input_data
+                        }
+                    }
+                ]
+            }
+        ]
+    )
+
+    caption_input = completion_input.choices[0].message.content
+
+    return caption_input
 
 def _natural_key(text: str):
     return tuple(
@@ -107,25 +226,28 @@ def batch_rename(directory: str):
         _stem, ext = os.path.splitext(filename)
         final = os.path.join(directory, f"{prefix}{i}{ext}")
         temp = os.path.join(directory, f".__tmp_rename__{uuid.uuid4().hex}{ext}")
-        print(f"Current Name: {source}\nNew Name: {temp}\n")
+        #print(f"Current Name: {source}\nNew Name: {temp}\n")
         os.rename(source, temp)
         staged.append((temp, final))
 
     for temp, final in staged:
-        print(f"Current Name: {temp}\nNew Name: {final}\n")
+        #print(f"Current Name: {temp}\nNew Name: {final}\n")
+        print(f"Current Name: {source}\nNew Name: {final}\n")
         os.rename(temp, final)
 
-def image_clip(directory: str, prompt: str, type_of: str, style_: str):
+def image_clip(directory: str, prompt: str):
 
     directory = os.path.normpath(directory)
 
     allowed_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+    
     imgs = [
         filename
         for filename in os.listdir(directory)
         if os.path.isfile(os.path.join(directory, filename))
         and os.path.splitext(filename)[1].casefold() in allowed_exts
     ]
+
     imgs.sort(key=lambda f: (_natural_key(os.path.splitext(f)[0]), f.casefold()))
     
     for f in imgs:
@@ -134,106 +256,56 @@ def image_clip(directory: str, prompt: str, type_of: str, style_: str):
 
         print(f"🖼️  Captioning: {image_path}")
         print()
-
-        image = Image.open(image_path).convert("RGB")
-
-        # Convert the image to a format suitable for transmission (e.g., JPEG)
-        image_io = io.BytesIO()
-        image.save(image_io, format='JPEG')
-        image_io.seek(0)
-
-        # Convert the image to base64
-        image_base64 = base64.b64encode(image_io.getvalue()).decode('utf-8')
-        image_data_url = f"data:image/jpeg;base64,{image_base64}"
-
-        data = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": "You are a helpful image captioner."},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_data_url}},
-                    ],
-                },
-            ],
-            "max_tokens": 512,
-            "temperature": 0.6,
-            "top_p": 0.9,
-        }
-
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        try:
-            response = requests.post(vllm_url, json=data, headers=headers, timeout=300)
-            response.raise_for_status()
-            response_data = response.json()
-            caption = (
-                response_data["choices"][0]["message"]["content"]
-                if "choices" in response_data
-                else "No caption found"
-            )
-            caption_out = caption.strip()
-            if type_of == "style" and style_:
-                caption_out = caption_out.rstrip()
-                if caption_out.endswith("."):
-                    caption_out = caption_out[:-1].rstrip()
-                caption_out = f"{caption_out}, {style_}"
-            with open(caption_path, "w", encoding="utf-8") as caption_text:
-                caption_text.write(caption_out)
-            print(f"💾 Saved caption: {caption_path}")
-            print()
-        except requests.exceptions.RequestException as e:
-            print("An error occurred:", e)
+        if os.getenv("ON_SILICON") == "yes":
+            try:
+                input_data = image_to_data_url(image_path)
+                caption_output = caption_image_silicon(input_data)
+                try:
+                    with open(caption_path, "w", encoding="utf-8") as caption_text:
+                        caption_text.write(caption_output)
+                except Exception as e:
+                    print(f"❌ Could not write {caption_path}")
+            except Exception as e:
+                print("❌ Something went wrong in 'caption_image_silicon()'")
+        else:
+            try:
+                caption_output = caption_image(image_path, prompt)
+                try:
+                    with open(caption_path, "w", encoding="utf-8") as caption_text:
+                        caption_text.write(caption_output)
+                except Exception as e:
+                    print(f"❌ Could not write {caption_path}")
+            except Exception as e:
+                print("An error occurred:", e)
 
 if __name__ == "__main__":
     
-    print("Python Program to caption image Lora dataset")
+    print("🌸 Lora Captioning Helper 🌸")
+    print()
     directory = input(r"Enter the path of the folder: ")
+    print()
+    caption_type = input(r"Enter caption type: (character or style): ")
+    print()
+
     directory = os.path.normpath(directory)
     directory_token = os.path.basename(directory)
 
-    allowed_prompts = ["descriptive", "descriptive_casual", "sd_prompt", "style"]
+    allowed_prompts = ["character", "style"]
 
-    while True:
-        prompt = input(r'Enter prompt type: "descriptive", "descriptive_casual", "sd_prompt", "style": ').strip().lower()
-        if prompt in allowed_prompts:
-            break
-        print('❌ Invalid prompt. Choose: "descriptive", "descriptive_casual", "sd_prompt", "style"')
-    
-    type_of = ""
-    style_ = ""
+    if caption_type in allowed_prompts:
+        if caption_type == 'character':
+            trigger = input(f"Enter the trigger word(s) Ex: 'tok woman': ")
+            prompt = CAPTION_CHARACTER.replace("TRIGGER", trigger)
+        elif caption_type == 'style':
+            prompt = CAPTION_STYLE
+        print('👀 Converting imgs to JPG...')
+        convert_images_to_jpg(directory)
+        print()
+        print('✨ Renaming imgs in batch...')
+        batch_rename(directory)
+        print()
+        print('🧠 Clipping imgs...')
+        image_clip(directory, prompt)
 
-    if prompt == "style":
-        type_of = "style"
-        style_ = input(r'Enter the syle description, Ex: "hiroiko araki style": ').strip().lower()
-        prompt_text = style_prompt
     else:
-        while True:
-            length = input(r'Enter caption length: "short", "medium-length", "long", "very long": ').strip().lower()
-            if length in caption_length:
-                break
-            print('❌ Invalid length. Choose: "short", "medium-length", "long", "very long"')
-    
-        if prompt == 'descriptive':
-            prompt_text = descriptive.replace("LENGTH", length).replace("DIRECTORY", directory_token)
-        elif prompt == 'descriptive_casual':
-            prompt_text = descriptive_casual.replace("LENGTH", length).replace("DIRECTORY", directory_token)
-        elif prompt == 'sd_prompt':
-            prompt_text = sd_prompt.replace("LENGTH", length).replace("DIRECTORY", directory_token)
-        else:
-            raise RuntimeError(f"Unknown prompt: {prompt}")
-    
-    print()
-    print("ℹ️ Prompt for this run:")
-    print()
-    print(prompt_text)
-    print()
-    
-    #convert_images_to_jpg(directory)
-    #batch_rename(directory)
-    
-    image_clip(directory, prompt_text, type_of, style_)
+        print('❌ Invalid type. Choose: "character", "style"')
